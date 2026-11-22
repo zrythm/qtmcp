@@ -8,6 +8,7 @@
 #include <QtCore/QStringList>
 #include <QtMcpServer/qmcpabstracthttpserver.h>
 #include <QtNetwork/QNetworkRequest>
+#include <functional>
 
 /*!
     \class HttpServer
@@ -43,6 +44,19 @@ public:
     void setAllowedOrigins(const QStringList &origins);
 
     /*!
+        Decides whether a request may be served, and as whom.
+
+        The authenticator inspects the HTTP request (typically its
+        \c Authorization header) and returns an identity string for an
+        authenticated request, or an empty string to reject it with 401.
+        The identity of the connection a session belongs to is reported
+        through authenticated().
+    */
+    using Authenticator = std::function<QString(const QNetworkRequest &)>;
+    void setAuthenticator(Authenticator authenticator);
+    Authenticator authenticator() const;
+
+    /*!
         Creates the shared session that carries every stateless (2026-07-28)
         request. Call it once newSession() is connected.
     */
@@ -58,8 +72,11 @@ public slots:
 signals:
     void newSession(const QUuid &session);
     void received(const QUuid &session, const QJsonObject &object);
+    void authenticated(const QUuid &session, const QString &identity);
 
 private:
+    QString authenticate(const QNetworkRequest &request, const QUuid &exchange);
+
     class Private;
     QScopedPointer<Private> d;
 };

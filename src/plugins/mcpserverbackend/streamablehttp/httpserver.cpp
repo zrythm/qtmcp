@@ -146,6 +146,7 @@ public:
 
     HttpServer *q;
     QStringList allowedOrigins;
+    HttpServer::Authenticator authenticator;
     QUuid statelessSession;
     QHash<QUuid, Session> sessions;
     QHash<QString, Pending> pending;   // internal request id -> pending request
@@ -290,6 +291,32 @@ void HttpServer::setAllowedOrigins(const QStringList &origins)
     d->allowedOrigins = origins;
 }
 
+HttpServer::Authenticator HttpServer::authenticator() const
+{
+    return d->authenticator;
+}
+
+void HttpServer::setAuthenticator(Authenticator authenticator)
+{
+    d->authenticator = std::move(authenticator);
+}
+
+// Authenticates the request and answers the exchange when it fails.
+// Returns the identity string on success.
+QString HttpServer::authenticate(const QNetworkRequest &request, const QUuid &exchange)
+{
+    if (!d->authenticator)
+        return QStringLiteral("anonymous");
+    const auto identity = d->authenticator(request);
+    if (!identity.isEmpty())
+        return identity;
+    completeResponse(exchange, 401,
+                     jsonRpcErrorBody({}, InvalidRequestErrorCode, "Authentication required"_L1),
+                     QStringLiteral("application/json"),
+                     {{"WWW-Authenticate"_ba, "Bearer"_ba}});
+    return {};
+}
+
 void HttpServer::startStatelessSession()
 {
     if (!d->statelessSession.isNull())
@@ -310,6 +337,9 @@ QByteArray HttpServer::postMcp(const QNetworkRequest &request, const QByteArray 
                          jsonRpcErrorBody({}, InvalidRequestErrorCode, "Origin not allowed"_L1));
         return {};
     }
+    const auto identity = authenticate(request, exchange);
+    if (identity.isEmpty())
+        return {};
 
     QString versionString;
     const auto version = requestedProtocolVersion(request, &versionString);
@@ -414,6 +444,8 @@ QByteArray HttpServer::postMcp(const QNetworkRequest &request, const QByteArray 
         return {};
     }
 
+    emit authenticated(session, identity);
+
     if (!isRequest) {
         // A notification, or a response to a server initiated request. Neither
         // produces a body, so the exchange is finished before the core runs and
@@ -470,6 +502,8 @@ QByteArray HttpServer::getMcp(const QNetworkRequest &request)
                          jsonRpcErrorBody({}, InvalidRequestErrorCode, "Origin not allowed"_L1));
         return {};
     }
+    if (authenticate(request, exchange).isEmpty())
+        return {};
 
     if (requestedProtocolVersion(request, nullptr) >= QtMcp::ProtocolVersion::v2026_07_28) {
         // 2026-07-28 replaced the standing GET stream with subscriptions/listen.
@@ -511,6 +545,8 @@ QByteArray HttpServer::deleteMcp(const QNetworkRequest &request)
                          jsonRpcErrorBody({}, InvalidRequestErrorCode, "Origin not allowed"_L1));
         return {};
     }
+    if (authenticate(request, exchange).isEmpty())
+        return {};
 
     if (requestedProtocolVersion(request, nullptr) >= QtMcp::ProtocolVersion::v2026_07_28) {
         // Without a session there is nothing to terminate.

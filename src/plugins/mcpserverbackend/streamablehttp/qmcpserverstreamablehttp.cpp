@@ -28,6 +28,8 @@ QMcpServerStreamableHttp::QMcpServerStreamableHttp(QObject *parent)
             this, &QMcpServerStreamableHttp::newSessionStarted);
     connect(&d->httpServer, &HttpServer::received,
             this, &QMcpServerStreamableHttp::received);
+    connect(&d->httpServer, &HttpServer::authenticated,
+            this, &QMcpServerStreamableHttp::authenticated);
 }
 
 QMcpServerStreamableHttp::~QMcpServerStreamableHttp() = default;
@@ -43,6 +45,16 @@ void QMcpServerStreamableHttp::setAllowedOrigins(const QStringList &allowedOrigi
         return;
     d->httpServer.setAllowedOrigins(allowedOrigins);
     emit allowedOriginsChanged(allowedOrigins);
+}
+
+QMcpServerStreamableHttp::Authenticator QMcpServerStreamableHttp::authenticator() const
+{
+    return d->httpServer.authenticator();
+}
+
+void QMcpServerStreamableHttp::setAuthenticator(Authenticator authenticator)
+{
+    d->httpServer.setAuthenticator(std::move(authenticator));
 }
 
 void QMcpServerStreamableHttp::start(const QString &server)

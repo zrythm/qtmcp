@@ -6,6 +6,8 @@
 
 #include <QtCore/QJsonObject>
 #include <QtCore/QStringList>
+#include <QtNetwork/QNetworkRequest>
+#include <functional>
 #include <QtMcpServer/qmcpserverbackendinterface.h>
 #include <QtMcpServer/qmcpserverbackendplugin.h>
 
@@ -37,6 +39,10 @@ public:
 
     QStringList allowedOrigins() const;
 
+    using Authenticator = std::function<QString(const QNetworkRequest &)>;
+    void setAuthenticator(Authenticator authenticator);
+    Authenticator authenticator() const;
+
 public slots:
     void start(const QString &server) override;
     void send(const QUuid &session, const QJsonObject &object) override;
@@ -45,6 +51,7 @@ public slots:
 
 signals:
     void allowedOriginsChanged(const QStringList &allowedOrigins);
+    void authenticated(const QUuid &session, const QString &identity);
 
 private:
     class Private;

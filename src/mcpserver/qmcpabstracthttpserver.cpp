@@ -368,6 +368,7 @@ void QMcpAbstractHttpServer::completeResponse(const QUuid &id, int statusCode, c
     case 200: statusText = "OK"_ba; break;
     case 202: statusText = "Accepted"_ba; break;
     case 400: statusText = "Bad Request"_ba; break;
+    case 401: statusText = "Unauthorized"_ba; break;
     case 403: statusText = "Forbidden"_ba; break;
     case 404: statusText = "Not Found"_ba; break;
     case 405: statusText = "Method Not Allowed"_ba; break;
