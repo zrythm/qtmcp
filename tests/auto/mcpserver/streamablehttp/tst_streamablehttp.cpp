@@ -15,6 +15,11 @@
 #include <QtNetwork/QTcpServer>
 #include <QtTest/QSignalSpy>
 #include <QtTest/QTest>
+#include <memory>
+
+#ifdef QTMCP_EMBEDDED_BACKEND
+#include <qmcpserverstreamablehttp.h>
+#endif
 
 using namespace Qt::Literals::StringLiterals;
 
@@ -72,6 +77,17 @@ int errorCodeOf(const QByteArray &body)
 
 } // namespace
 
+// Builds the server under test. The upstream build loads the backend as a
+// plugin; a plain build links it in directly.
+QMcpServer *createServer(QObject *parent)
+{
+#ifdef QTMCP_EMBEDDED_BACKEND
+    return new QMcpServer(new QMcpServerStreamableHttp(), parent);
+#else
+    return new QMcpServer("streamablehttp"_L1, parent);
+#endif
+}
+
 class tst_StreamableHttp : public QObject
 {
     Q_OBJECT
@@ -91,6 +107,9 @@ private slots:
     void statelessRequest();
     void statelessHeaderMismatchIsRejected();
     void statelessRejectsGetAndDelete();
+    void statelessSessionsEndWithTheirConnection();
+    void listenSessionEndsWithItsStream();
+    void statefulSessionSurvivesDisconnect();
     void listenAcknowledgementCarriesTheListenRequestId_data();
     void listenAcknowledgementCarriesTheListenRequestId();
     void forbiddenOrigin();
@@ -99,7 +118,8 @@ private:
     QNetworkRequest endpoint(const QString &protocolVersion = {}) const;
     // Runs the initialize / notifications/initialized handshake and returns the
     // session id the server minted.
-    QByteArray openSession(const QString &protocolVersion);
+    QByteArray openSession(const QString &protocolVersion,
+                           QNetworkAccessManager *manager = nullptr);
 
     QMcpServer *m_server = nullptr;
     QNetworkAccessManager m_networkAccessManager;
@@ -108,8 +128,10 @@ private:
 
 void tst_StreamableHttp::initTestCase()
 {
+#ifndef QTMCP_EMBEDDED_BACKEND
     if (!QMcpServer::backends().contains("streamablehttp"_L1))
         QSKIP("the streamablehttp backend is not available");
+#endif
 
     // Let the OS pick a free port, then hand that port to the server.
     QTcpServer probe;
@@ -117,7 +139,7 @@ void tst_StreamableHttp::initTestCase()
     m_port = probe.serverPort();
     probe.close();
 
-    m_server = new QMcpServer("streamablehttp"_L1, this);
+    m_server = createServer(this);
 
     QEventLoop loop;
     connect(m_server, &QMcpServer::started, &loop, &QEventLoop::quit);
@@ -142,8 +164,12 @@ QNetworkRequest tst_StreamableHttp::endpoint(const QString &protocolVersion) con
     return request;
 }
 
-QByteArray tst_StreamableHttp::openSession(const QString &protocolVersion)
+QByteArray tst_StreamableHttp::openSession(const QString &protocolVersion,
+                                           QNetworkAccessManager *manager)
 {
+    if (!manager)
+        manager = &m_networkAccessManager;
+
     QJsonObject params;
     params.insert("protocolVersion"_L1, protocolVersion);
     params.insert("capabilities"_L1, QJsonObject());
@@ -153,7 +179,7 @@ QByteArray tst_StreamableHttp::openSession(const QString &protocolVersion)
     params.insert("clientInfo"_L1, clientInfo);
 
     const auto body = QJsonDocument(jsonRpc("initialize"_L1, 1, params)).toJson(QJsonDocument::Compact);
-    auto *reply = m_networkAccessManager.post(endpoint(protocolVersion), body);
+    auto *reply = manager->post(endpoint(protocolVersion), body);
     int statusCode = 0;
     waitForBody(reply, &statusCode);
     reply->deleteLater();
@@ -169,7 +195,7 @@ QByteArray tst_StreamableHttp::openSession(const QString &protocolVersion)
     request.setRawHeader("Mcp-Session-Id"_ba, sessionId);
     const auto initialized = QJsonDocument(jsonRpcNotification("notifications/initialized"_L1))
                                      .toJson(QJsonDocument::Compact);
-    auto *notifyReply = m_networkAccessManager.post(request, initialized);
+    auto *notifyReply = manager->post(request, initialized);
     waitForBody(notifyReply, nullptr);
     notifyReply->deleteLater();
 
@@ -178,17 +204,23 @@ QByteArray tst_StreamableHttp::openSession(const QString &protocolVersion)
 
 void tst_StreamableHttp::backendIsAvailable()
 {
+#ifdef QTMCP_EMBEDDED_BACKEND
+    // This build links the backend directly; the constructed server is the
+    // availability proof.
+    QVERIFY(m_server);
+#else
     QVERIFY(QMcpServer::backends().contains("streamablehttp"_L1));
+#endif
 }
 
 void tst_StreamableHttp::startFailureIsReported()
 {
     // m_server already listens on m_port, so a second server cannot.
-    QMcpServer server("streamablehttp"_L1);
-    QSignalSpy startedSpy(&server, &QMcpServer::started);
-    QSignalSpy errorSpy(&server, &QMcpServer::errorOccurred);
+    std::unique_ptr<QMcpServer> server(createServer(nullptr));
+    QSignalSpy startedSpy(server.get(), &QMcpServer::started);
+    QSignalSpy errorSpy(server.get(), &QMcpServer::errorOccurred);
     QTest::ignoreMessage(QtWarningMsg, QRegularExpression(u"^Failed to listen on "_s));
-    server.start(u"127.0.0.1:%1"_s.arg(m_port));
+    server->start(u"127.0.0.1:%1"_s.arg(m_port));
     // The error arrives from the event loop, not from within start().
     QCOMPARE(errorSpy.count(), 0);
     QVERIFY(errorSpy.wait(Timeout));
@@ -209,11 +241,11 @@ void tst_StreamableHttp::invalidPortIsRejected_data()
 void tst_StreamableHttp::invalidPortIsRejected()
 {
     QFETCH(QString, address);
-    QMcpServer server("streamablehttp"_L1);
-    QSignalSpy startedSpy(&server, &QMcpServer::started);
-    QSignalSpy errorSpy(&server, &QMcpServer::errorOccurred);
+    std::unique_ptr<QMcpServer> server(createServer(nullptr));
+    QSignalSpy startedSpy(server.get(), &QMcpServer::started);
+    QSignalSpy errorSpy(server.get(), &QMcpServer::errorOccurred);
     QTest::ignoreMessage(QtWarningMsg, QRegularExpression(u"^Invalid port in "_s));
-    server.start(address);
+    server->start(address);
     QVERIFY(errorSpy.wait(Timeout));
     QCOMPARE(errorSpy.count(), 1);
     QCOMPARE(startedSpy.count(), 0);
@@ -487,6 +519,187 @@ void tst_StreamableHttp::statelessRejectsGetAndDelete()
     waitForBody(deleteReply, &statusCode);
     deleteReply->deleteLater();
     QCOMPARE(statusCode, 405);
+}
+
+/*
+ * Scenario: a long running server serves stateless clients that reconnect
+ *           for every request
+ * GIVEN a 2026-07-28 client that sends its requests over its own connection
+ * WHEN  the connection closes
+ * THEN  the session the requests ran on is destroyed, and a later connection
+ *       runs on a session of its own
+ */
+void tst_StreamableHttp::statelessSessionsEndWithTheirConnection()
+{
+    const auto version = QtMcp::protocolVersionToString(QtMcp::ProtocolVersion::v2026_07_28);
+
+    // Earlier tests keep their sessions on the shared connection pool, so all
+    // counts are relative to the sessions that exist now.
+    QList<QUuid> idsBefore;
+    for (auto *session : m_server->sessions())
+        idsBefore.append(session->sessionId());
+    const int baseline = idsBefore.size();
+
+    QList<QUuid> destroyedIds;
+    // Scoped to this function: the connection must not outlive the captured
+    // list, because a session may be destroyed while a later test runs.
+    QObject scope;
+    connect(m_server, &QMcpServer::sessionDestroyed, &scope,
+            [&destroyedIds](QMcpServerSession *session) {
+                // The reported session is still readable.
+                destroyedIds.append(session->sessionId());
+            });
+
+    for (int i = 0; i < 2; ++i) {
+        // A manager of its own, so that releasing it closes the connection.
+        auto *manager = new QNetworkAccessManager(this);
+        auto request = endpoint(version);
+        request.setRawHeader("Mcp-Method"_ba, "tools/list"_ba);
+        const auto message = withStatelessMeta(jsonRpc("tools/list"_L1, i), version);
+        auto *reply = manager->post(request, QJsonDocument(message).toJson(QJsonDocument::Compact));
+        int statusCode = 0;
+        waitForBody(reply, &statusCode);
+        reply->deleteLater();
+        QCOMPARE(statusCode, 200);
+
+        const auto sessions = m_server->sessions();
+        QCOMPARE(sessions.size(), baseline + 1);
+        QUuid liveId;
+        for (auto *session : sessions)
+            if (!idsBefore.contains(session->sessionId()))
+                liveId = session->sessionId();
+        QVERIFY(!liveId.isNull());
+
+        manager->deleteLater();
+        QTRY_COMPARE_WITH_TIMEOUT(destroyedIds.size(), i + 1, Timeout);
+        QCOMPARE(destroyedIds.last(), liveId);
+        QCOMPARE(m_server->sessions().size(), baseline);
+    }
+
+    // Every connection ran on its own session.
+    QVERIFY(destroyedIds.at(0) != destroyedIds.at(1));
+}
+
+/*
+ * Scenario: a subscription stream owns its session
+ * GIVEN a 2026-07-28 client with an open subscriptions/listen stream
+ * WHEN  the stream connection closes
+ * THEN  the dedicated session the subscription was routed on is destroyed
+ */
+void tst_StreamableHttp::listenSessionEndsWithItsStream()
+{
+    const auto version = QtMcp::protocolVersionToString(QtMcp::ProtocolVersion::v2026_07_28);
+
+    QUuid listenSessionId;
+    bool destroyed = false;
+    // Scoped to this function, so that a session destroyed while a later test
+    // runs cannot write to this stack frame.
+    QObject scope;
+    connect(m_server, &QMcpServer::sessionDestroyed, &scope,
+            [&destroyed, &listenSessionId](QMcpServerSession *session) {
+                if (session->sessionId() == listenSessionId)
+                    destroyed = true;
+            });
+
+    const int baseline = m_server->sessions().size();
+
+    // Open the subscription stream on a connection of its own, so that no
+    // other session shares its lifetime.
+    QJsonObject optIns;
+    optIns.insert("toolsListChanged"_L1, true);
+    QJsonObject params;
+    params.insert("notifications"_L1, optIns);
+    const auto message = withStatelessMeta(jsonRpc("subscriptions/listen"_L1, "listen:1"_L1, params),
+                                           version);
+    const auto body = QJsonDocument(message).toJson(QJsonDocument::Compact);
+    QByteArray request = "POST /mcp HTTP/1.1\r\nHost: 127.0.0.1\r\n";
+    request += "Accept: application/json, text/event-stream\r\n";
+    request += "MCP-Protocol-Version: " + version.toLatin1() + "\r\n";
+    request += "Mcp-Method: subscriptions/listen\r\n";
+    request += "Content-Type: application/json\r\n";
+    request += "Content-Length: " + QByteArray::number(body.size()) + "\r\n\r\n";
+    request += body;
+
+    QTcpSocket socket;
+    socket.connectToHost(QHostAddress::LocalHost, m_port);
+    QTRY_VERIFY_WITH_TIMEOUT(socket.state() == QAbstractSocket::ConnectedState, Timeout);
+    socket.write(request);
+    QByteArray received;
+    connect(&socket, &QTcpSocket::readyRead, &socket, [&received, &socket]() {
+        received.append(socket.readAll());
+    });
+    QTRY_VERIFY_WITH_TIMEOUT(
+            received.contains("notifications/subscriptions/acknowledged"), Timeout);
+    QVERIFY(received.startsWith("HTTP/1.1 200"));
+    QVERIFY(received.contains("text/event-stream"));
+
+    for (auto *session : m_server->sessions()) {
+        if (session->hasListenSubscriptions())
+            listenSessionId = session->sessionId();
+    }
+    // The subscription runs on a dedicated session of its own.
+    QVERIFY(!listenSessionId.isNull());
+    QCOMPARE(m_server->sessions().size(), baseline + 1);
+    QVERIFY(!destroyed);
+
+    // Closing the stream ends the subscription, and with it its session.
+    socket.disconnectFromHost();
+    QTRY_VERIFY_WITH_TIMEOUT(destroyed, Timeout);
+    for (auto *session : m_server->sessions())
+        QVERIFY(session->sessionId() != listenSessionId);
+}
+
+/*
+ * Scenario: a pre-2026-07-28 session is bound to its Mcp-Session-Id, not to a
+ *           connection
+ * GIVEN a 2025-11-25 client whose initialize connection closed
+ * WHEN  no DELETE arrives
+ * THEN  the session survives the closed connection
+ * WHEN  the client sends DELETE
+ * THEN  the session is destroyed
+ */
+void tst_StreamableHttp::statefulSessionSurvivesDisconnect()
+{
+    const auto version = QtMcp::protocolVersionToString(QtMcp::ProtocolVersion::v2025_11_25);
+
+    QUuid targetId;
+    bool destroyed = false;
+    // Scoped to this function, so that a session destroyed while a later test
+    // runs cannot write to this stack frame.
+    QObject scope;
+    connect(m_server, &QMcpServer::sessionDestroyed, &scope,
+            [&destroyed, &targetId](QMcpServerSession *session) {
+                if (session->sessionId() == targetId)
+                    destroyed = true;
+            });
+
+    auto *manager = new QNetworkAccessManager(this);
+    const auto sessionId = openSession(version, manager);
+    QVERIFY(!sessionId.isEmpty());
+    targetId = QUuid::fromString(QString::fromLatin1(sessionId));
+    QVERIFY(!targetId.isNull());
+
+    manager->deleteLater();
+    // A connection teardown arriving in that window must not end the session.
+    QTest::qWait(300);
+    bool stillListed = false;
+    for (auto *session : m_server->sessions()) {
+        if (session->sessionId() == targetId)
+            stillListed = true;
+    }
+    QVERIFY(stillListed);
+    QVERIFY(!destroyed);
+
+    auto deleteRequest = endpoint(version);
+    deleteRequest.setRawHeader("Mcp-Session-Id"_ba, sessionId);
+    auto *deleteReply = m_networkAccessManager.deleteResource(deleteRequest);
+    int statusCode = 0;
+    waitForBody(deleteReply, &statusCode);
+    deleteReply->deleteLater();
+    QCOMPARE(statusCode, 200);
+    QTRY_VERIFY_WITH_TIMEOUT(destroyed, Timeout);
+    for (auto *session : m_server->sessions())
+        QVERIFY(session->sessionId() != targetId);
 }
 
 void tst_StreamableHttp::listenAcknowledgementCarriesTheListenRequestId_data()

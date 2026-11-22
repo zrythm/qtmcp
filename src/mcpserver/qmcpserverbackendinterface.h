@@ -82,6 +82,14 @@ signals:
     void newSessionStarted(const QUuid &session);
 
     /*!
+        Emitted when a client session ended, e.g. because its connection
+        closed, its subscription stream ended, or the client terminated it.
+        The server drops the session and destroys its QMcpServerSession.
+        \param session UUID of the ended client session
+    */
+    void sessionFinished(const QUuid &session);
+
+    /*!
         Emitted when the backend has successfully started.
     */
     void started();

@@ -61,6 +61,15 @@ signals:
     */
     void connectionClosed(const QUuid &id);
 
+    /*!
+        Emitted when the HTTP connection identified by \a connection closed,
+        whether or not a deferred response or stream was open on it.
+
+        \param connection The key activeConnection() returns while the
+        connection's request slots run
+    */
+    void connectionEnded(quintptr connection);
+
 protected:
     /*!
         Returns a key that identifies the HTTP connection the currently

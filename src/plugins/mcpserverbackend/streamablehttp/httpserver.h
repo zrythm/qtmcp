@@ -23,9 +23,10 @@
         in the \c Mcp-Session-Id response header and echoed back by the client
         on every subsequent request. \c GET opens a standalone SSE stream for
         that session, \c DELETE terminates it.
-    \li 2026-07-28: sessions are gone from the wire. Ordinary requests run on a
-        single shared, stateless session; \c subscriptions/listen gets a
-        dedicated one because the core routes notifications per session.
+    \li 2026-07-28: sessions are gone from the wire. Requests run on one
+        internal session per HTTP connection, which ends with the connection;
+        \c subscriptions/listen gets a dedicated session that ends with its
+        stream, because the core routes notifications per session.
         \c GET and \c DELETE are not allowed.
     \endlist
 */
@@ -56,12 +57,6 @@ public:
     void setAuthenticator(Authenticator authenticator);
     Authenticator authenticator() const;
 
-    /*!
-        Creates the shared session that carries every stateless (2026-07-28)
-        request. Call it once newSession() is connected.
-    */
-    void startStatelessSession();
-
     Q_INVOKABLE QByteArray postMcp(const QNetworkRequest &request, const QByteArray &body);
     Q_INVOKABLE QByteArray getMcp(const QNetworkRequest &request);
     Q_INVOKABLE QByteArray deleteMcp(const QNetworkRequest &request);
@@ -73,6 +68,10 @@ signals:
     void newSession(const QUuid &session);
     void received(const QUuid &session, const QJsonObject &object);
     void authenticated(const QUuid &session, const QString &identity);
+    // The transport dropped a session: its connection closed, its dedicated
+    // stream ended, or the client terminated it with DELETE. The core
+    // destroys the matching QMcpServerSession.
+    void sessionFinished(const QUuid &session);
 
 private:
     QString authenticate(const QNetworkRequest &request, const QUuid &exchange);

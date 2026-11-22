@@ -187,6 +187,15 @@ QMcpServer::Private::Private(const QString &type, QMcpServer *parent,
 
         emit q->newSession(session);
     });
+    connect(backend, &QMcpServerBackendInterface::sessionFinished, q, [this](const QUuid &sessionId) {
+        auto *session = sessions.take(sessionId);
+        if (!session)
+            return;
+        // Callbacks awaiting a response from the client can no longer run.
+        callbacks.remove(sessionId);
+        emit q->sessionDestroyed(session);
+        session->deleteLater();
+    });
     connect(backend, &QMcpServerBackendInterface::received, q, [this](const QUuid &session, const QJsonObject &object) {
         // response
         if (object.contains("id"_L1)) {

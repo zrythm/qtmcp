@@ -137,6 +137,10 @@ public:
     bool isOriginAllowed(const QNetworkRequest &request) const;
     void openStream(const QUuid &streamId, const QUuid &session, bool dedicated);
     void closeStream(const QUuid &streamId);
+    // Drops the transport side of a session and tells the core to destroy the
+    // matching QMcpServerSession. Requests still awaiting a response for the
+    // session can no longer be delivered.
+    void finishSession(const QUuid &session);
     // Resolves the session a non-initialize request belongs to. Answers the
     // exchange itself and returns false when it cannot be resolved. A POST
     // that forgot the header is a malformed request (400), while for GET and
@@ -147,7 +151,6 @@ public:
     HttpServer *q;
     QStringList allowedOrigins;
     HttpServer::Authenticator authenticator;
-    QUuid statelessSession;
     QHash<QUuid, Session> sessions;
     // HTTP connection key -> the session its stateless (2026-07-28)
     // requests run on. One session per connection keeps a connection's
@@ -218,16 +221,11 @@ void HttpServer::Private::closeStream(const QUuid &streamId)
         keepAlive.stop();
 
     auto it = sessions.find(stream.session);
-    if (it != sessions.end()) {
-        if (it->stream == streamId)
-            it->stream = QUuid();
-        if (stream.dedicated) {
-            // TODO: QMcpServer offers no API to destroy a session, so the core
-            // side QMcpServerSession outlives the stream it was created for.
-            // Only the transport side mapping is dropped here.
-            sessions.erase(it);
-        }
-    }
+    if (it != sessions.end() && it->stream == streamId)
+        it->stream = QUuid();
+    if (stream.dedicated)
+        // The session existed only for this stream.
+        finishSession(stream.session);
 
     // Drop requests that were being answered through this stream.
     for (auto pendingIt = pending.begin(); pendingIt != pending.end();) {
@@ -236,6 +234,20 @@ void HttpServer::Private::closeStream(const QUuid &streamId)
         else
             ++pendingIt;
     }
+}
+
+void HttpServer::Private::finishSession(const QUuid &session)
+{
+    if (!sessions.contains(session))
+        return;
+    sessions.remove(session);
+    for (auto it = pending.begin(); it != pending.end();) {
+        if (it->session == session)
+            it = pending.erase(it);
+        else
+            ++it;
+    }
+    emit q->sessionFinished(session);
 }
 
 bool HttpServer::Private::resolveSession(const QNetworkRequest &request, const QUuid &exchange,
@@ -281,6 +293,17 @@ HttpServer::HttpServer(QObject *parent)
             return;
         }
     });
+    connect(this, &QMcpAbstractHttpServer::connectionEnded, this, [this](quintptr connection) {
+        // A stateless (2026-07-28) session lives as long as its connection.
+        // Removing the entry also keeps a recycled connection key from ever
+        // resolving to a previous connection's session.
+        const auto it = d->connectionSessions.constFind(connection);
+        if (it == d->connectionSessions.constEnd())
+            return;
+        const auto session = it.value();
+        d->connectionSessions.erase(it);
+        d->finishSession(session);
+    });
 }
 
 HttpServer::~HttpServer() = default;
@@ -319,15 +342,6 @@ QString HttpServer::authenticate(const QNetworkRequest &request, const QUuid &ex
                      QStringLiteral("application/json"),
                      {{"WWW-Authenticate"_ba, "Bearer"_ba}});
     return {};
-}
-
-void HttpServer::startStatelessSession()
-{
-    if (!d->statelessSession.isNull())
-        return;
-    d->statelessSession = QUuid::createUuid();
-    d->sessions.insert(d->statelessSession, {QtMcp::ProtocolVersion::v2026_07_28, {}, {}, {}});
-    emit newSession(d->statelessSession);
 }
 
 QByteArray HttpServer::postMcp(const QNetworkRequest &request, const QByteArray &body)
@@ -580,9 +594,7 @@ QByteArray HttpServer::deleteMcp(const QNetworkRequest &request)
         d->closeStream(stream);
         closeSseConnection(stream);
     }
-    // TODO: QMcpServer offers no API to destroy a session, so its
-    // QMcpServerSession stays alive until the server shuts down.
-    d->sessions.remove(session);
+    d->finishSession(session);
     completeResponse(exchange, 200);
     qCDebug(lcQMcpServerStreamableHttpPlugin) << "session" << session << "terminated";
     return {};

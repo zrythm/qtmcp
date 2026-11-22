@@ -26,6 +26,8 @@ QMcpServerStreamableHttp::QMcpServerStreamableHttp(QObject *parent)
 {
     connect(&d->httpServer, &HttpServer::newSession,
             this, &QMcpServerStreamableHttp::newSessionStarted);
+    connect(&d->httpServer, &HttpServer::sessionFinished,
+            this, &QMcpServerBackendInterface::sessionFinished);
     connect(&d->httpServer, &HttpServer::received,
             this, &QMcpServerStreamableHttp::received);
     connect(&d->httpServer, &HttpServer::authenticated,

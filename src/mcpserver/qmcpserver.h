@@ -463,6 +463,14 @@ signals:
     void newSession(QMcpServerSession *session);
 
     /*!
+        Emitted when a client session ended, e.g. because its connection
+        closed or the client terminated it. The session object is destroyed
+        right after the signal; it must not be stored.
+        \param session The session object, about to be destroyed
+    */
+    void sessionDestroyed(QMcpServerSession *session);
+
+    /*!
         Emitted when a raw JSON message is received from a client.
         \param session UUID of the client session
         \param object The received JSON message

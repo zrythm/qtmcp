@@ -85,6 +85,7 @@ private slots:
     void testPost_data();
     void testPost();
     void testSse();
+    void endedConnectionsAreReported();
 
 private:
     QNetworkAccessManager nam;
@@ -271,6 +272,27 @@ void tst_QMcpAbstractHttpServer::testSse()
     }
 
     qDebug() << __LINE__ << receivedData;
+}
+
+void tst_QMcpAbstractHttpServer::endedConnectionsAreReported()
+{
+    QList<quintptr> ended;
+    connect(server, &QMcpAbstractHttpServer::connectionEnded, this,
+            [&ended](quintptr connection) {
+        ended.append(connection);
+    });
+
+    QTcpSocket socket;
+    socket.connectToHost(QHostAddress::LocalHost, port);
+    QTRY_VERIFY_WITH_TIMEOUT(socket.state() == QAbstractSocket::ConnectedState, 1000);
+    socket.write("GET / HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n");
+    QTRY_VERIFY_WITH_TIMEOUT(socket.bytesAvailable() > 0, 1000);
+    socket.readAll();
+    // A served request does not end the connection.
+    QVERIFY(ended.isEmpty());
+
+    socket.disconnectFromHost();
+    QTRY_COMPARE_WITH_TIMEOUT(ended.size(), 1, 1000);
 }
 
 QTEST_MAIN(tst_QMcpAbstractHttpServer)

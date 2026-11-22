@@ -266,4 +266,44 @@ install(FILES
     "${CMAKE_CURRENT_BINARY_DIR}/cmake/QtMcpConfigVersion.cmake"
     DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/QtMcp")
 
+# ---------------------------------------------------------------------------
+# Auto tests. The Qt build system runs the suite through qt_build_repo();
+# this path builds the tests that need no backend plugins against the targets
+# above. The streamablehttp backend is linked in directly and the test
+# constructs it through QMcpServer's external-backend constructor
+# (QTMCP_EMBEDDED_BACKEND).
+# ---------------------------------------------------------------------------
+option(QTMCP_BUILD_TESTS "Build the auto tests" OFF)
+if(QTMCP_BUILD_TESTS)
+    find_package(Qt6 6.8 CONFIG REQUIRED COMPONENTS Network Test)
+    enable_testing()
+
+    function(qtmcp_add_test name sources)
+        add_executable(${name} ${sources})
+        set_target_properties(${name} PROPERTIES
+            AUTOMOC ON
+            CXX_STANDARD 20
+            CXX_STANDARD_REQUIRED ON)
+    endfunction()
+
+    qtmcp_add_test(tst_qmcpabstracthttpserver
+        tests/auto/mcpserver/qmcpabstracthttpserver/tst_qmcpabstracthttpserver.cpp)
+    target_link_libraries(tst_qmcpabstracthttpserver PRIVATE McpServer Qt6::Network Qt6::Test)
+    add_test(NAME tst_qmcpabstracthttpserver COMMAND tst_qmcpabstracthttpserver)
+
+    qtmcp_add_test(tst_qmcpserversession
+        tests/auto/mcpserver/qmcpserversession/tst_qmcpserversession.cpp)
+    target_link_libraries(tst_qmcpserversession PRIVATE McpServer McpCommon Qt6::Test)
+    add_test(NAME tst_qmcpserversession COMMAND tst_qmcpserversession)
+
+    qtmcp_add_test(tst_streamablehttp
+        tests/auto/mcpserver/streamablehttp/tst_streamablehttp.cpp)
+    target_compile_definitions(tst_streamablehttp PRIVATE QTMCP_EMBEDDED_BACKEND)
+    target_include_directories(tst_streamablehttp PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/plugins/mcpserverbackend/streamablehttp")
+    target_link_libraries(tst_streamablehttp PRIVATE
+        McpCommon McpServer McpServerStreamableHttp Qt6::Network Qt6::Test)
+    add_test(NAME tst_streamablehttp COMMAND tst_streamablehttp)
+endif()
+
 endif()

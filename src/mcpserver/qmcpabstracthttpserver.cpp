@@ -73,6 +73,8 @@ void QMcpAbstractHttpServer::Private::handleDisconnected(QTcpSocket *socket)
     if (currentSocket == socket)
         currentSocket = nullptr;
 
+    emit q->connectionEnded(reinterpret_cast<quintptr>(socket));
+
     // Deferred and SSE connections are tracked by UUID; tell the subclass the
     // peer went away, e.g. to treat it as cancellation (2026-07-28).
     auto id = deferred.key(socket);
@@ -266,6 +268,9 @@ bool QMcpAbstractHttpServer::bind(QTcpServer *server)
         // Clean up any existing connections
         const auto sockets = d->dataMap.keys();
         for (QTcpSocket *socket : sockets) {
+            // disconnected() is about to be disconnected from, so report the
+            // closing connection here.
+            emit connectionEnded(reinterpret_cast<quintptr>(socket));
             socket->disconnect();
             socket->deleteLater();
         }
