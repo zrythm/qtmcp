@@ -89,10 +89,6 @@ void QMcpServerStreamableHttp::start(const QString &server)
     }
     qCDebug(lcQMcpServerStreamableHttpPlugin) << "Listening on port" << d->tcpServer.serverPort();
 
-    // 2026-07-28 has no initialize handshake, so the session its requests run
-    // on cannot be created on demand by one of them; it exists up front.
-    d->httpServer.startStatelessSession();
-
     emit started();
 }
 

@@ -149,6 +149,10 @@ public:
     HttpServer::Authenticator authenticator;
     QUuid statelessSession;
     QHash<QUuid, Session> sessions;
+    // HTTP connection key -> the session its stateless (2026-07-28)
+    // requests run on. One session per connection keeps a connection's
+    // authenticated identity addressable in the core.
+    QHash<quintptr, QUuid> connectionSessions;
     QHash<QString, Pending> pending;   // internal request id -> pending request
     QHash<QUuid, Stream> streams;      // SSE connection id -> stream
     QTimer keepAlive;
@@ -426,14 +430,25 @@ QByteArray HttpServer::postMcp(const QNetworkRequest &request, const QByteArray 
         if (method == "subscriptions/listen"_L1) {
             // The core routes notifications per session, so a subscription
             // needs a session of its own to keep its stream apart from the
-            // shared stateless one.
+            // connection's own session.
             session = QUuid::createUuid();
             d->sessions.insert(session, {version, {}, {}, {}});
             emit newSession(session);
         } else {
-            if (d->statelessSession.isNull())
-                startStatelessSession();
-            session = d->statelessSession;
+            // Stateless on the wire, but one internal session per HTTP
+            // connection: clients re-declare their capabilities on every
+            // request, so per-connection sessions are protocol-safe, and a
+            // connection's authenticated identity stays addressable.
+            const auto connection = activeConnection();
+            const auto existing = d->connectionSessions.constFind(connection);
+            if (existing != d->connectionSessions.constEnd()) {
+                session = existing.value();
+            } else {
+                session = QUuid::createUuid();
+                d->sessions.insert(session, {version, {}, {}, {}});
+                d->connectionSessions.insert(connection, session);
+                emit newSession(session);
+            }
         }
     } else if (method == "initialize"_L1) {
         session = QUuid::createUuid();

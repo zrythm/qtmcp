@@ -283,6 +283,11 @@ bool QMcpAbstractHttpServer::bind(QTcpServer *server)
     return true;
 }
 
+quintptr QMcpAbstractHttpServer::activeConnection() const
+{
+    return reinterpret_cast<quintptr>(d->currentSocket);
+}
+
 QUuid QMcpAbstractHttpServer::registerSseRequest(const QNetworkRequest &request)
 {
     QUuid ret;

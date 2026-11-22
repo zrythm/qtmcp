@@ -63,6 +63,15 @@ signals:
 
 protected:
     /*!
+        Returns a key that identifies the HTTP connection the currently
+        running request slot was invoked on, or 0 outside a request slot.
+
+        Two clients may issue byte-identical requests, so transports that
+        keep per-connection state key it on this.
+    */
+    quintptr activeConnection() const;
+
+    /*!
         Registers a new SSE request and returns a unique identifier for it.
 
         \param request The HTTP request to register
