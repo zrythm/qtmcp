@@ -37,7 +37,8 @@ static const QStringList &methodsRemovedIn2026_07_28()
 class QMcpServer::Private
 {
 public:
-    Private(const QString &type, QMcpServer *parent);
+    Private(const QString &type, QMcpServer *parent,
+            QMcpServerBackendInterface *preset = nullptr);
 
     QMcpServerSession *findSession(const QUuid &sessionId, bool isInitialized, QMcpJSONRPCErrorError *error = nullptr) const;
     void sendTaggedNotification(QMcpServerSession *session, const QMcpNotification &notification) const;
@@ -77,7 +78,8 @@ public:
 #endif
 };
 
-QMcpServer::Private::Private(const QString &type, QMcpServer *parent)
+QMcpServer::Private::Private(const QString &type, QMcpServer *parent,
+                             QMcpServerBackendInterface *preset)
     : q(parent)
 {
     QMcpServerCapabilitiesResources resources;
@@ -91,12 +93,16 @@ QMcpServer::Private::Private(const QString &type, QMcpServer *parent)
     tools.setListChanged(true);
     capabilities.setTools(tools);
 
-    backend = qLoadPlugin<QMcpServerBackendInterface, QMcpServerBackendPlugin>(backendLoader(), type);
-    if (!backend) {
-        qWarning() << type << "not found";
-        qWarning() << "call QMcpServer::backends() to get a list of available backends";
-        qWarning() << QMcpServer::backends();
-        return;
+    if (preset) {
+        backend = preset;
+    } else {
+        backend = qLoadPlugin<QMcpServerBackendInterface, QMcpServerBackendPlugin>(backendLoader(), type);
+        if (!backend) {
+            qWarning() << type << "not found";
+            qWarning() << "call QMcpServer::backends() to get a list of available backends";
+            qWarning() << QMcpServer::backends();
+            return;
+        }
     }
 
     backend->setParent(q);
@@ -398,6 +404,18 @@ bool QMcpServer::isTasksExtensionEnabled() const
 QMcpServer::QMcpServer(const QString &backend, QObject *parent)
     : QObject(parent)
     , d(new Private(backend, this))
+{
+    setupBuiltinHandlers();
+}
+
+QMcpServer::QMcpServer(QMcpServerBackendInterface *backend, QObject *parent)
+    : QObject(parent)
+    , d(new Private(QString(), this, backend))
+{
+    setupBuiltinHandlers();
+}
+
+void QMcpServer::setupBuiltinHandlers()
 {
     addRequestHandler([this](const QUuid &sessionId, const QMcpInitializeRequest &request, QMcpJSONRPCErrorError *error) {
         QMcpInitializeResult result;

@@ -23,6 +23,8 @@
 
 QT_BEGIN_NAMESPACE
 
+class QMcpServerBackendInterface;
+
 #ifdef QT_GUI_LIB
 class QAction;
 #endif
@@ -111,6 +113,17 @@ public:
         \param parent Parent QObject (optional)
     */
     explicit QMcpServer(const QString &backend, QObject *parent = nullptr);
+
+    /*!
+        Constructs an MCP server around an already created backend instance.
+
+        Embedders that instantiate a backend directly (e.g. a statically
+        linked transport) do not need the plugin machinery; the server takes
+        ownership of \a backend.
+        \param backend Backend instance to serve on
+        \param parent Parent QObject (optional)
+    */
+    explicit QMcpServer(QMcpServerBackendInterface *backend, QObject *parent = nullptr);
 
     /*!
         Destroys the MCP server.
@@ -489,6 +502,9 @@ private:
         CreateTaskResult minted by the tasks extension. Consumes the state.
     */
     QJsonObject takePendingResultOverride(const QUuid &session);
+
+    /*! Registers the handlers for the protocol's built-in methods. */
+    void setupBuiltinHandlers();
 
 
     void send(const QUuid &session, const QJsonObject &message, std::function<void(const QUuid &session, const QJsonObject &)> callback = nullptr);
