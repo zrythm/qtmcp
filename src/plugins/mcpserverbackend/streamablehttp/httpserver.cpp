@@ -172,10 +172,16 @@ bool HttpServer::Private::isOriginAllowed(const QNetworkRequest &request) const
     if (!request.hasRawHeader("Origin"))
         return true;
 
-    const auto origin = QString::fromUtf8(request.rawHeader("Origin")).trimmed();
-    if (origin.startsWith("http://localhost"_L1) || origin.startsWith("http://127.0.0.1"_L1))
-        return true;
-    return allowedOrigins.contains(origin);
+    const auto raw = QString::fromUtf8(request.rawHeader("Origin")).trimmed();
+    // Loopback origins are compared by parsed host, never by string prefix:
+    // "http://localhost.evil.com" must not pass as a loopback origin.
+    const QUrl origin(raw);
+    if (origin.isValid() && origin.scheme() == "http"_L1) {
+        const auto host = origin.host();
+        if (host == "localhost"_L1 || host == "127.0.0.1"_L1)
+            return true;
+    }
+    return allowedOrigins.contains(raw);
 }
 
 void HttpServer::Private::openStream(const QUuid &streamId, const QUuid &session, bool dedicated)
