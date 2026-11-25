@@ -109,11 +109,20 @@ function(qtmcp_camelize filename out_var)
     set(${out_var} "${result}" PARENT_SCOPE)
 endfunction()
 
-# Exports header that qt_internal_add_module would have generated.
+# Exports header that qt_internal_add_module would have generated. The
+# libraries follow BUILD_SHARED_LIBS; a static library has no symbol to
+# export or import.
 function(qtmcp_write_exports_header dir ns module)
     set(guard "QT${module}EXPORTS_H")
     string(TOUPPER "${guard}" guard)
     string(TOLOWER "qt${ns}exports.h" fname)
+    if(BUILD_SHARED_LIBS)
+        set(export_decl "Q_DECL_EXPORT")
+        set(import_decl "Q_DECL_IMPORT")
+    else()
+        set(export_decl "")
+        set(import_decl "")
+    endif()
     set(content "
 #ifndef ${guard}
 #define ${guard}
@@ -121,9 +130,9 @@ function(qtmcp_write_exports_header dir ns module)
 #include <QtCore/qglobal.h>
 
 #if defined(QT_BUILD_${module}_LIB)
-#  define Q_${module}_EXPORT Q_DECL_EXPORT
+#  define Q_${module}_EXPORT ${export_decl}
 #else
-#  define Q_${module}_EXPORT Q_DECL_IMPORT
+#  define Q_${module}_EXPORT ${import_decl}
 #endif
 
 #endif
@@ -238,6 +247,12 @@ target_include_directories(McpServerStreamableHttp PUBLIC
     "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
     "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/QtMcpServer>")
 target_link_libraries(McpServerStreamableHttp PUBLIC McpServer McpCommon Qt6::Core Qt6::Network)
+
+if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
+    # The moc compilation unit of a Debug build exceeds the object file's
+    # section limit (error C1128).
+    target_compile_options(McpCommon McpServer McpServerStreamableHttp PRIVATE /bigobj)
+endif()
 
 install(TARGETS McpCommon McpServer McpServerStreamableHttp
     EXPORT QtMcpTargets
