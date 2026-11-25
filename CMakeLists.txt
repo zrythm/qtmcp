@@ -251,7 +251,9 @@ target_link_libraries(McpServerStreamableHttp PUBLIC McpServer McpCommon Qt6::Co
 if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
     # The moc compilation unit of a Debug build exceeds the object file's
     # section limit (error C1128).
-    target_compile_options(McpCommon McpServer McpServerStreamableHttp PRIVATE /bigobj)
+    foreach(target IN ITEMS McpCommon McpServer McpServerStreamableHttp)
+        target_compile_options(${target} PRIVATE /bigobj)
+    endforeach()
 endif()
 
 install(TARGETS McpCommon McpServer McpServerStreamableHttp
